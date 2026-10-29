@@ -1,14 +1,10 @@
 <?php
+require_once __DIR__ . "/../../middleware/auth.php";
+requireAuth();
+
 require_once __DIR__ . "/../../repositories/book-repository.php";
 
-$id = $_GET['id'] ?? null;
-
-if (!$id) {
-    header("Location: index.php");
-    exit;
-}
-
-$book = getBook($id);
+$book = getBook();
 
 $pageTitle = "Detail Buku";
 $pageSubtitle = "Informasi lengkap buku beserta kategori dan penulis";

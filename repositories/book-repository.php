@@ -1,72 +1,161 @@
 <?php
-
 require_once __DIR__ . "/../config/database.php";
 
-
-function getBooks()
+// Karakter % dan _ pada pencarian dianggap teks biasa, bukan wildcard LIKE.
+function escapeLike($value)
 {
-    global $pdo;
+  return addcslashes($value, '\\%_');
+}
 
-    $query = "select b.id, b.title, b.stock, c.name as category from books b
-              left join categories c on b.category_id = c.id";
+// Menyusun kondisi WHERE untuk pencarian judul dan filter kategori.
+function buildBookFilter($search, $categoryId)
+{
+  $where = "b.title like :search";
+  $params = [
+    ':search' => "%" . escapeLike($search) . "%"
+  ];
 
-    $stmt = $pdo->prepare($query);
-    $stmt->execute();
+  if ($categoryId !== '') {
+    $where .= " and b.category_id = :category_id";
+    $params[':category_id'] = $categoryId;
+  }
 
-    $books = $stmt->fetchAll();
+  return [$where, $params];
+}
 
-    $query = "select ba.book_id, a.name from book_author ba
-              left join authors a on ba.author_id = a.id";
+function countBooks($search, $categoryId)
+{
+  global $pdo;
 
-    $stmt = $pdo->prepare($query);
-    $stmt->execute();
+  [$where, $params] = buildBookFilter($search, $categoryId);
 
-    $bookAuthors = $stmt->fetchAll();
+  $query = "select count(b.id) from books b
+            where $where
+           ";
+  $stmt = $pdo->prepare($query);
+  $stmt->execute($params);
 
-    $bookByAuthors = [];
+  return (int) $stmt->fetchColumn();
+}
 
-    foreach ($bookAuthors as $bookAuthor) {
-        $bookByAuthors[$bookAuthor['book_id']][] = $bookAuthor['name'];
-    }
+function getBooks($search, $categoryId, $page, $perPage)
+{
+  global $pdo;
 
-    foreach ($books as $index => $book) {
-        $books[$index]['authors'] = $bookByAuthors[$book['id']] ?? [];
-    }
+  [$where, $params] = buildBookFilter($search, $categoryId);
 
+  $query = "select b.id, b.title, b.stock, c.name as category from books b
+            left join categories c on b.category_id = c.id
+            where $where
+            order by b.id desc
+            limit :limit offset :offset
+           ";
+  $stmt = $pdo->prepare($query);
+
+  foreach ($params as $name => $value) {
+    $stmt->bindValue($name, $value);
+  }
+
+  // LIMIT dan OFFSET wajib bertipe integer, jadi tidak bisa lewat execute([...]).
+  $stmt->bindValue(':limit', (int) $perPage, PDO::PARAM_INT);
+  $stmt->bindValue(':offset', (int) (($page - 1) * $perPage), PDO::PARAM_INT);
+  $stmt->execute();
+
+  $books = $stmt->fetchAll();
+
+  if (count($books) === 0) {
     return $books;
+  }
+
+  // Ambil penulis hanya untuk buku yang tampil di halaman ini.
+  $bookIds = array_column($books, 'id');
+  $placeholders = implode(',', array_fill(0, count($bookIds), '?'));
+
+  $query = "select ba.book_id, a.name from book_author ba
+            left join authors a on ba.author_id = a.id
+            where ba.book_id in ($placeholders)
+           ";
+  $stmt = $pdo->prepare($query);
+  $stmt->execute($bookIds);
+
+  $bookAuthors = $stmt->fetchAll();
+
+  $bookByAuthors = [];
+  foreach ($bookAuthors as $bookAuthor) {
+    $bookByAuthors[$bookAuthor['book_id']][] = $bookAuthor['name'];
+  }
+
+  foreach ($books as $index => $book) {
+    $books[$index]['authors'] = $bookByAuthors[$book['id']] ?? [];
+  }
+
+  return $books;
 }
 
 function getBook($id)
 {
-    global $pdo;
+  global $pdo;
 
-    $query = "select b.id, b.title, b.isbn, b.year, b.stock, b.category_id, b.description,
-                     c.name as category
-              from books b
-              left join categories c on b.category_id = c.id
-              where b.id = :id";
+  $query = "select id, title, isbn, year, stock, category_id, description from books where id = :id";
+  $stmt = $pdo->prepare($query);
+  $stmt->execute([
+    'id' => $id
+  ]);
 
-    $stmt = $pdo->prepare($query);
-    $stmt->execute(['id' => $id]);
+  $book = $stmt->fetch();
 
-    $book = $stmt->fetch();
+  if (!$book) {
+    header("Location: ../books/index.php");
+    exit;
+  }
 
-    if (!$book) {
-        header("Location: ../books/index.php");
-        exit;
-    }
+  $query = "select a.id from book_author ba
+            left join authors a on ba.author_id = a.id
+            where ba.book_id = :book_id
+           ";
+  $stmt = $pdo->prepare($query);
+  $stmt->execute([
+    'book_id' => $book['id']
+  ]);
 
-    $query = "select a.id, a.name from book_author ba
-              left join authors a on ba.author_id = a.id
-              where ba.book_id = :book_id";
+  $authorIds = $stmt->fetchAll();
 
-    $stmt = $pdo->prepare($query);
-    $stmt->execute(['book_id' => $book['id']]);
+  $book['author_ids'] = array_column($authorIds, 'id');
 
-    $bookAuthors = $stmt->fetchAll();
+  return $book;
+}
 
-    $book['author_ids'] = array_column($bookAuthors, 'id');
-    $book['authors']    = array_column($bookAuthors, 'name');
+function isBookExists($id)
+{
+  global $pdo;
 
-    return $book;
+  $query = "select count(id) from books where id = :id";
+
+  $stmt = $pdo->prepare($query);
+  $stmt->execute([
+    'id' => $id
+  ]);
+
+  $isBookExists = $stmt->fetchColumn() > 0;
+
+  return $isBookExists;
+}
+
+function isIsbnTaken($isbn, $ignoreBookId)
+{
+  global $pdo;
+
+  $bookId = intval($ignoreBookId);
+
+  $query = "select count(id) from books where isbn = :isbn && id != :book_id";
+
+  $stmt = $pdo->prepare($query);
+  $stmt->execute([
+    'isbn' => $isbn,
+    'book_id' => $bookId
+  ]);
+
+  $isIsbnTaken = $stmt->fetchColumn() > 0;
+
+  return $isIsbnTaken;
 }

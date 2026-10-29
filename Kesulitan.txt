@@ -1,0 +1,3 @@
+MASALAH YANG SERING SAY ALAMI
+1.Error yang sangat sulit dicari, kalau gak salah kemarin waktu dikelas memang butuh auto pilot, dan saya sadar memang masih pemula dan memang sangat menghabiskan waktu untuk mencari error.
+2.Saya mengalami stuck saat awal2 di validation dan saya tidak tahu error nya dimana dan akhirnya saya hapus ulang kode nya dan mulai dari awal video 

@@ -1,7 +1,8 @@
 <?php
-
+require_once __DIR__ . "/../../middleware/auth.php";
 require_once __DIR__ . "/../../config/database.php";
 
+requireRole(['admin']);
 
 if (isset($_GET['id']) && $_SERVER['REQUEST_METHOD'] === "GET") {
     try {
@@ -31,7 +32,6 @@ if (isset($_GET['id']) && $_SERVER['REQUEST_METHOD'] === "GET") {
 
         header("Location: ../../pages/books/index.php");
         exit;
-
     } catch (PDOException $e) {
         $pdo->rollBack();
 
